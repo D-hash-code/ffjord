@@ -203,7 +203,7 @@ def get_dataset(args):
             ])
         )
     data_shape = (im_dim, im_size, im_size)
-    if not args.conv:
+    if not args.conv: ## What is this for ??
         data_shape = (im_dim * im_size * im_size,)
 
     test_loader = torch.utils.data.DataLoader(
@@ -361,12 +361,12 @@ if __name__ == "__main__":
     best_loss = float("inf")
     itr = 0
     for epoch in range(args.begin_epoch, args.num_epochs + 1):
-        model.train()
+        model.train() ## Set model train mode
         train_loader = get_train_loader(train_set, epoch)
-        for _, (x, y) in enumerate(train_loader):
+        for _, (x, y) in enumerate(train_loader): ## is x,y a single image? or a batch?
             start = time.time()
             update_lr(optimizer, itr)
-            optimizer.zero_grad()
+            optimizer.zero_grad() ## Set gradients to zero before
 
             if not args.conv:
                 x = x.view(x.shape[0], -1)
