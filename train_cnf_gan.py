@@ -9,6 +9,17 @@ import torchvision.datasets as dset
 import torchvision.transforms as tforms
 from torchvision.utils import save_image
 
+###### DISCRIMINATOR IMPORTS #########
+import logging
+
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.autograd import Variable
+
+from lib.networks import Discriminator
+
+######################################
+
 import lib.layers as layers
 import lib.utils as utils
 import lib.odenvp as odenvp
@@ -23,6 +34,7 @@ from train_misc import create_regularization_fns, get_regularization, append_reg
 torch.backends.cudnn.benchmark = True
 SOLVERS = ["dopri5", "bdf", "rk4", "midpoint", 'adams', 'explicit_adams']
 parser = argparse.ArgumentParser("Continuous Normalizing Flow")
+parser.add_argument("--ganify",type=eval, default=False,choices=[True,False])
 parser.add_argument("--data", choices=["mnist", "svhn", "cifar10", 'lsun_church'], type=str, default="mnist")
 parser.add_argument("--dims", type=str, default="8,32,32,8")
 parser.add_argument("--strides", type=str, default="2,2,1,-2,-2")
@@ -144,64 +156,7 @@ def get_dataset(args):
         im_size = 28 if args.imagesize is None else args.imagesize
         train_set = dset.MNIST(root="./data", train=True, transform=trans(im_size), download=True)
         test_set = dset.MNIST(root="./data", train=False, transform=trans(im_size), download=True)
-    elif args.data == "svhn":
-        im_dim = 3
-        im_size = 32 if args.imagesize is None else args.imagesize
-        train_set = dset.SVHN(root="./data", split="train", transform=trans(im_size), download=True)
-        test_set = dset.SVHN(root="./data", split="test", transform=trans(im_size), download=True)
-    elif args.data == "cifar10":
-        im_dim = 3
-        im_size = 32 if args.imagesize is None else args.imagesize
-        train_set = dset.CIFAR10(
-            root="./data", train=True, transform=tforms.Compose([
-                tforms.Resize(im_size),
-                tforms.RandomHorizontalFlip(),
-                tforms.ToTensor(),
-                add_noise,
-            ]), download=True
-        )
-        test_set = dset.CIFAR10(root="./data", train=False, transform=trans(im_size), download=True)
-    elif args.data == 'celeba':
-        im_dim = 3
-        im_size = 64 if args.imagesize is None else args.imagesize
-        train_set = dset.CelebA(
-            train=True, transform=tforms.Compose([
-                tforms.ToPILImage(),
-                tforms.Resize(im_size),
-                tforms.RandomHorizontalFlip(),
-                tforms.ToTensor(),
-                add_noise,
-            ])
-        )
-        test_set = dset.CelebA(
-            train=False, transform=tforms.Compose([
-                tforms.ToPILImage(),
-                tforms.Resize(im_size),
-                tforms.ToTensor(),
-                add_noise,
-            ])
-        )
-    elif args.data == 'lsun_church':
-        im_dim = 3
-        im_size = 64 if args.imagesize is None else args.imagesize
-        train_set = dset.LSUN(
-            'data', ['church_outdoor_train'], transform=tforms.Compose([
-                tforms.Resize(96),
-                tforms.RandomCrop(64),
-                tforms.Resize(im_size),
-                tforms.ToTensor(),
-                add_noise,
-            ])
-        )
-        test_set = dset.LSUN(
-            'data', ['church_outdoor_val'], transform=tforms.Compose([
-                tforms.Resize(96),
-                tforms.RandomCrop(64),
-                tforms.Resize(im_size),
-                tforms.ToTensor(),
-                add_noise,
-            ])
-        )
+
     data_shape = (im_dim, im_size, im_size)
     if not args.conv: ## What is this for ??
         data_shape = (im_dim * im_size * im_size,)
@@ -252,33 +207,7 @@ def create_model(args, data_shape, regularization_fns):
             time_length=args.time_length,
         )
     else:
-        if args.autoencode:
-
-            def build_cnf():
-                autoencoder_diffeq = layers.AutoencoderDiffEqNet(
-                    hidden_dims=hidden_dims,
-                    input_shape=data_shape,
-                    strides=strides,
-                    conv=args.conv,
-                    layer_type=args.layer_type,
-                    nonlinearity=args.nonlinearity,
-                )
-                odefunc = layers.AutoencoderODEfunc(
-                    autoencoder_diffeq=autoencoder_diffeq,
-                    divergence_fn=args.divergence_fn,
-                    residual=args.residual,
-                    rademacher=args.rademacher,
-                )
-                cnf = layers.CNF(
-                    odefunc=odefunc,
-                    T=args.time_length,
-                    regularization_fns=regularization_fns,
-                    solver=args.solver,
-                )
-                return cnf
-        else:
-
-            def build_cnf():
+        def build_cnf():
                 diffeq = layers.ODEnet(
                     hidden_dims=hidden_dims,
                     input_shape=data_shape,
@@ -332,18 +261,6 @@ if __name__ == "__main__":
     # optimizer
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    # restore parameters
-    if args.resume is not None:
-        checkpt = torch.load(args.resume, map_location=lambda storage, loc: storage)
-        model.load_state_dict(checkpt["state_dict"])
-        if "optim_state_dict" in checkpt.keys():
-            optimizer.load_state_dict(checkpt["optim_state_dict"])
-            # Manually move optimizer state to device.
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if torch.is_tensor(v):
-                        state[k] = cvt(v)
-
     if torch.cuda.is_available():
         model = torch.nn.DataParallel(model).cuda()
 
@@ -358,53 +275,108 @@ if __name__ == "__main__":
 
     if args.spectral_norm and not args.resume: spectral_norm_power_iteration(model, 500)
 
+    ####### INITIALISE DISCRIMINATOR #######
+
+    ## Create Discriminator Model
+    if args.ganify:
+        n_input_channels= 1 ## For grayscale = 1, for rgb = 3
+        n_features = 32 ## Number of features to be used in discriminator
+        netD = Discriminator(n_input_channels, n_features).to(device)
+
+        ## loss function
+        criterion = nn.BCELoss()
+
+        ## Discriminator optimizer
+        discriminator_lr = 0.0002 ## Discriminator learning rate
+        optimizerD = optim.Adam(netD.parameters(), lr=discriminator_lr,weight_decay=args.weight_decay)
+
+        ## Initialise other variables
+        real_label=1
+        fake_label=0
+
+    ########################################
     best_loss = float("inf")
     itr = 0
     for epoch in range(args.begin_epoch, args.num_epochs + 1):
-        model.train() ## Set model train mode
+        model.train() ## Set model to train mode
+        netD.train()
         train_loader = get_train_loader(train_set, epoch)
         for _, (x, y) in enumerate(train_loader): ## is x,y a single image? or a batch?
-            start = time.time()
-            update_lr(optimizer, itr)
-            optimizer.zero_grad() ## Set gradients to zero before
-
-            if not args.conv:
-                x = x.view(x.shape[0], -1)
-
-            #######- Discriminator Training-#########
-            n_critic = 0
-            if n_critic>0: 
-                for _ in range(n_critic):
-                    ()
-            
-            #########################################
             # cast data and move to device
             x = cvt(x)
-            # compute loss
-            loss = compute_bits_per_dim(x, model)
-            if regularization_coeffs:
-                reg_states = get_regularization(model, regularization_coeffs)
-                reg_loss = sum(
-                    reg_state * coeff for reg_state, coeff in zip(reg_states, regularization_coeffs) if coeff != 0
-                )
-                loss = loss + reg_loss
-            total_time = count_total_time(model)
-            loss = loss + total_time * args.time_penalty
 
-            loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            #######- Adversarial Training-#########
 
-            optimizer.step()
+            ## Train Discriminator
+            if args.ganify:
+    
+                bs = x.shape[0]
 
-            if args.spectral_norm: spectral_norm_power_iteration(model, args.spectral_norm_niter)
+                netD.zero_grad()
+                label = torch.full((bs,),real_label,device=device)
+                
+                #Real Training
+                output = netD(x)
+                lossD_real = criterion(output,label)
+                lossD_real.backward()
+                D_x = output.mean().item()
 
-            time_meter.update(time.time() - start)
-            loss_meter.update(loss.item())
-            steps_meter.update(count_nfe(model))
-            grad_meter.update(grad_norm)
-            tt_meter.update(total_time)
+                #Fake Training
+                fake_images = _ ##generator
+                label.fill_(fake_label)
+                output = netD(fake_images.detach())
+                lossD_fake = criterion(output,label)
+                lossD_fake.backward()
+                D_G_z1 = output.mean.item()
+                lossD = lossD_real + lossD_fake ## For printing purposes ??
+                grad_norm = torch.nn.utils.clip_grad_norm_(netD.parameters(), args.max_grad_norm)
+                optimizerD.step()
 
-            if itr % args.log_freq == 0:
+                start = time.time()
+                ## Train Generator
+                optimizer.zero_grad()
+                label.fill_(real_label)
+                output = netD(fake_images)
+                lossG = criterion(output,label)
+                lossG.backward()
+                D_G_z2 = output.mean().item()
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                optimizer.step()
+            
+            #########################################
+            else:
+                update_lr(optimizer, itr)
+                start = time.time()
+                optimizer.zero_grad() ## Set gradients to zero before
+                
+                # compute loss
+                loss = compute_bits_per_dim(x, model)
+                if regularization_coeffs:
+                    reg_states = get_regularization(model, regularization_coeffs)
+                    reg_loss = sum(
+                        reg_state * coeff for reg_state, coeff in zip(reg_states, regularization_coeffs) if coeff != 0
+                    )
+                    loss = loss + reg_loss
+                total_time = count_total_time(model)
+                loss = loss + total_time * args.time_penalty
+
+                loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                optimizer.step()
+
+            if args.spectral_norm and not args.ganify: spectral_norm_power_iteration(model, args.spectral_norm_niter)
+
+            ## Add logging tool
+            if args.ganify:
+                pass
+            else:
+                time_meter.update(time.time() - start)
+                loss_meter.update(loss.item())
+                steps_meter.update(count_nfe(model))
+                grad_meter.update(grad_norm)
+                tt_meter.update(total_time)
+
+            if itr % args.log_freq == 0 and not args.ganify:
                 log_message = (
                     "Iter {:04d} | Time {:.4f}({:.4f}) | Bit/dim {:.4f}({:.4f}) | "
                     "Steps {:.0f}({:.2f}) | Grad Norm {:.4f}({:.4f}) | Total Time {:.2f}({:.2f})".format(
@@ -419,29 +391,33 @@ if __name__ == "__main__":
             itr += 1
 
         # compute test loss
-        model.eval()
-        if epoch % args.val_freq == 0:
-            with torch.no_grad():
-                start = time.time()
-                logger.info("validating...")
-                losses = []
-                for (x, y) in test_loader:
-                    if not args.conv:
-                        x = x.view(x.shape[0], -1)
-                    x = cvt(x)
-                    loss = compute_bits_per_dim(x, model)
-                    losses.append(loss)
+        if args.ganify:
+            
+            pass
+        else:
+            model.eval()
+            if epoch % args.val_freq == 0:
+                with torch.no_grad():
+                    start = time.time()
+                    logger.info("validating...")
+                    losses = []
+                    for (x, y) in test_loader:
+                        if not args.conv:
+                            x = x.view(x.shape[0], -1)
+                        x = cvt(x)
+                        loss = compute_bits_per_dim(x, model)
+                        losses.append(loss)
 
-                loss = np.mean(losses)
-                logger.info("Epoch {:04d} | Time {:.4f}, Bit/dim {:.4f}".format(epoch, time.time() - start, loss))
-                if loss < best_loss:
-                    best_loss = loss
-                    utils.makedirs(args.save)
-                    torch.save({
-                        "args": args,
-                        "state_dict": model.module.state_dict() if torch.cuda.is_available() else model.state_dict(),
-                        "optim_state_dict": optimizer.state_dict(),
-                    }, os.path.join(args.save, "checkpt.pth"))
+                    loss = np.mean(losses)
+                    logger.info("Epoch {:04d} | Time {:.4f}, Bit/dim {:.4f}".format(epoch, time.time() - start, loss))
+                    if loss < best_loss:
+                        best_loss = loss
+                        utils.makedirs(args.save)
+                        torch.save({
+                            "args": args,
+                            "state_dict": model.module.state_dict() if torch.cuda.is_available() else model.state_dict(),
+                            "optim_state_dict": optimizer.state_dict(),
+                        }, os.path.join(args.save, "checkpt.pth"))
 
         # visualize samples and density
         with torch.no_grad():
