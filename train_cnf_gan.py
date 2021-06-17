@@ -34,7 +34,7 @@ from train_misc import create_regularization_fns, get_regularization, append_reg
 torch.backends.cudnn.benchmark = True
 SOLVERS = ["dopri5", "bdf", "rk4", "midpoint", 'adams', 'explicit_adams']
 parser = argparse.ArgumentParser("Continuous Normalizing Flow")
-parser.add_argument("--ganify",type=eval, default=False,choices=[True,False])
+parser.add_argument("--ganify",type=eval, default=True,choices=[True,False])
 parser.add_argument("--data", choices=["mnist", "svhn", "cifar10", 'lsun_church'], type=str, default="mnist")
 parser.add_argument("--dims", type=str, default="8,32,32,8")
 parser.add_argument("--strides", type=str, default="2,2,1,-2,-2")
@@ -296,11 +296,15 @@ if __name__ == "__main__":
 
     ########################################
     best_loss = float("inf")
+    
     itr = 0
     for epoch in range(args.begin_epoch, args.num_epochs + 1):
         model.train() ## Set model to train mode
-        netD.train()
+        if args.ganify: netD.train()
         train_loader = get_train_loader(train_set, epoch)
+
+        if epoch == args.begin_epoch:num_batches = len(train_loader)
+
         for _, (x, y) in enumerate(train_loader): ## is x,y a single image? or a batch?
             # cast data and move to device
             x = cvt(x)
@@ -313,7 +317,7 @@ if __name__ == "__main__":
                 bs = x.shape[0]
 
                 netD.zero_grad()
-                label = torch.full((bs,),real_label,device=device)
+                label = torch.full((bs,),real_label,device=device,dtype=torch.float32)
                 
                 #Real Training
                 output = netD(x)
@@ -322,12 +326,13 @@ if __name__ == "__main__":
                 D_x = output.mean().item()
 
                 #Fake Training
-                fake_images = _ ##generator
+                noise = cvt(torch.randn(200, *data_shape))
+                fake_images = model(noise, reverse=True).view(-1, *data_shape)
                 label.fill_(fake_label)
                 output = netD(fake_images.detach())
                 lossD_fake = criterion(output,label)
                 lossD_fake.backward()
-                D_G_z1 = output.mean.item()
+                D_G_z1 = output.mean().item()
                 lossD = lossD_real + lossD_fake ## For printing purposes ??
                 grad_norm = torch.nn.utils.clip_grad_norm_(netD.parameters(), args.max_grad_norm)
                 optimizerD.step()
@@ -376,24 +381,79 @@ if __name__ == "__main__":
                 grad_meter.update(grad_norm)
                 tt_meter.update(total_time)
 
-            if itr % args.log_freq == 0 and not args.ganify:
-                log_message = (
-                    "Iter {:04d} | Time {:.4f}({:.4f}) | Bit/dim {:.4f}({:.4f}) | "
-                    "Steps {:.0f}({:.2f}) | Grad Norm {:.4f}({:.4f}) | Total Time {:.2f}({:.2f})".format(
-                        itr, time_meter.val, time_meter.avg, loss_meter.val, loss_meter.avg, steps_meter.val,
-                        steps_meter.avg, grad_meter.val, grad_meter.avg, tt_meter.val, tt_meter.avg
+            if itr % args.log_freq == 0:
+                if args.ganify:
+                    log_message = ('Epoch [{}/{}], step [{}/{}], d_loss: {:.4f}, g_loss: {:.4f}, D(x): {:.2f}, Discriminator - D(G(x)): {:.2f}, Generator - D(G(x)): {:.2f}'.format(epoch+1, args.num_epochs, 
+                                                            itr+1, num_batches, lossD.item(), lossG.item(), D_x, D_G_z1, D_G_z2)
                     )
-                )
-                if regularization_coeffs:
-                    log_message = append_regularization_to_log(log_message, regularization_fns, reg_states)
-                logger.info(log_message)
+                    logger.info(log_message)
+                else:
+                    log_message = (
+                        "Iter {:04d} | Time {:.4f}({:.4f}) | Bit/dim {:.4f}({:.4f}) | "
+                        "Steps {:.0f}({:.2f}) | Grad Norm {:.4f}({:.4f}) | Total Time {:.2f}({:.2f})".format(
+                            itr, time_meter.val, time_meter.avg, loss_meter.val, loss_meter.avg, steps_meter.val,
+                            steps_meter.avg, grad_meter.val, grad_meter.avg, tt_meter.val, tt_meter.avg
+                        )
+                    )
+                    if regularization_coeffs:
+                        log_message = append_regularization_to_log(log_message, regularization_fns, reg_states)
+                    logger.info(log_message)
 
             itr += 1
 
         # compute test loss
         if args.ganify:
-            
-            pass
+            model.eval()
+            netD.eval()
+            if epoch % args.val_freq == 0:
+                with torch.no_grad():
+                    start = time.time()
+                    logger.info("validating...")
+                    d_losses = []
+                    g_losses = []
+                    ll_losses = []
+                    for (x, y) in test_loader:
+                        x = cvt(x)
+                        ll_loss = compute_bits_per_dim(x, model)
+                        ll_losses.append(ll_loss)
+                        
+                        bs = x.shape[0]
+                        label = torch.full((bs,),real_label,device=device,dtype=torch.float32)
+                        
+                        #Real Training
+                        output = netD(x)
+                        lossD_real = criterion(output,label)
+
+                        #Fake Training
+                        noise = cvt(torch.randn(200, *data_shape))
+                        fake_images = model(noise, reverse=True).view(-1, *data_shape)
+                        label.fill_(fake_label)
+                        output = netD(fake_images.detach())
+                        lossD_fake = criterion(output,label)
+
+                        lossD = lossD_real + lossD_fake ## For printing purposes ??
+
+                        ## Train Generator
+
+                        label.fill_(real_label)
+                        output = netD(fake_images)
+                        lossG = criterion(output,label)
+                        d_losses.append(lossD)
+                        g_losses.append(lossG)
+
+
+                    ll_loss = np.mean(ll_losses)
+                    d_loss = np.mean(d_losses)
+                    g_loss = np.mean(g_losses)
+                    logger.info("Epoch {:04d} | Time {:.4f}, Log-Likelihood Bit/dim {:.4f}, Discriminator Loss {:.4f}, Generator Loss {:.4f}".format(epoch, time.time() - start, ll_loss,d_loss,g_loss))
+                    if ll_loss < best_loss:
+                        best_loss = ll_loss
+                        utils.makedirs(args.save)
+                        torch.save({
+                            "args": args,
+                            "state_dict": model.module.state_dict() if torch.cuda.is_available() else model.state_dict(),
+                            "optim_state_dict": optimizer.state_dict(),
+                        }, os.path.join(args.save, "checkpt.pth"))
         else:
             model.eval()
             if epoch % args.val_freq == 0:
