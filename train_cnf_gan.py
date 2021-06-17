@@ -371,6 +371,13 @@ if __name__ == "__main__":
             if not args.conv:
                 x = x.view(x.shape[0], -1)
 
+            #######- Discriminator Training-#########
+            n_critic = 0
+            if n_critic>0: 
+                for _ in range(n_critic):
+                    ()
+            
+            #########################################
             # cast data and move to device
             x = cvt(x)
             # compute loss
