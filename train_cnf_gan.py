@@ -2,6 +2,7 @@ import argparse
 import os
 import time
 import numpy as np
+import pandas as pd
 
 import torch
 import torch.optim as optim
@@ -35,6 +36,8 @@ torch.backends.cudnn.benchmark = True
 SOLVERS = ["dopri5", "bdf", "rk4", "midpoint", 'adams', 'explicit_adams']
 parser = argparse.ArgumentParser("Continuous Normalizing Flow")
 parser.add_argument("--ganify",type=eval, default=True,choices=[True,False])
+parser.add_argument("--hybrid",type=eval, default=True,choices=[True,False])
+parser.add_argument("--colab_mode",type=eval, default=False,choices=[True,False])
 parser.add_argument("--data", choices=["mnist", "svhn", "cifar10", 'lsun_church'], type=str, default="mnist")
 parser.add_argument("--dims", type=str, default="8,32,32,8")
 parser.add_argument("--strides", type=str, default="2,2,1,-2,-2")
@@ -104,10 +107,12 @@ parser.add_argument("--val_freq", type=int, default=1)
 parser.add_argument("--log_freq", type=int, default=10)
 
 args = parser.parse_args()
-
+unique_file_code = np.random.choice(100000)
 # logger
+if args.colab_mode:
+    args.save = '/content/drive/MyDrive/Thesis_Colab_Files/results'
 utils.makedirs(args.save)
-logger = utils.get_logger(logpath=os.path.join(args.save, 'logs'), filepath=os.path.abspath(__file__))
+logger = utils.get_logger(logpath=os.path.join(args.save, f'{unique_file_code}logs'), filepath=os.path.abspath(__file__))
 
 if args.layer_type == "blend":
     logger.info("!! Setting time_length from None to 1.0 due to use of Blend layers.")
@@ -296,7 +301,14 @@ if __name__ == "__main__":
 
     ########################################
     best_loss = float("inf")
-    
+    with torch.no_grad():
+        fig_filename = os.path.join(args.save, f"{unique_file_code}figs", "before.jpg")
+        utils.makedirs(os.path.dirname(fig_filename))
+        generated_samples = model(fixed_z, reverse=True).view(-1, *data_shape)
+        save_image(generated_samples, fig_filename, nrow=10)
+    train_hist_df = pd.DataFrame(columns=['Epoch','Step','D_loss','G_loss','D(x)','D(G(x1))','D(G(x2))','ll_loss','ll_loss_av','grad_norm','grad_norm_av'])
+
+    test_hist_df = pd.DataFrame(columns=['Epoch','D_loss','G_loss','D(x)','D(G(x1))','D(G(x2))','ll_loss'])
     itr = 0
     for epoch in range(args.begin_epoch, args.num_epochs + 1):
         model.train() ## Set model to train mode
@@ -347,6 +359,25 @@ if __name__ == "__main__":
                 D_G_z2 = output.mean().item()
                 grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
+                if args.hybrid:
+                    #update_lr(optimizer, itr)
+                    start = time.time()
+                    optimizer.zero_grad() ## Set gradients to zero before
+                    
+                    # compute loss
+                    loss = compute_bits_per_dim(x, model)
+                    if regularization_coeffs:
+                        reg_states = get_regularization(model, regularization_coeffs)
+                        reg_loss = sum(
+                            reg_state * coeff for reg_state, coeff in zip(reg_states, regularization_coeffs) if coeff != 0
+                        )
+                        loss = loss + reg_loss
+                    total_time = count_total_time(model)
+                    loss = loss + total_time * args.time_penalty
+
+                    loss.backward()
+                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    optimizer.step()
             
             #########################################
             else:
@@ -372,7 +403,7 @@ if __name__ == "__main__":
             if args.spectral_norm and not args.ganify: spectral_norm_power_iteration(model, args.spectral_norm_niter)
 
             ## Add logging tool
-            if args.ganify:
+            if args.ganify and not args.hybrid:
                 pass
             else:
                 time_meter.update(time.time() - start)
@@ -383,10 +414,17 @@ if __name__ == "__main__":
 
             if itr % args.log_freq == 0:
                 if args.ganify:
-                    log_message = ('Epoch [{}/{}], step [{}/{}], d_loss: {:.4f}, g_loss: {:.4f}, D(x): {:.2f}, Discriminator - D(G(x)): {:.2f}, Generator - D(G(x)): {:.2f}'.format(epoch+1, args.num_epochs, 
-                                                            itr+1, num_batches, lossD.item(), lossG.item(), D_x, D_G_z1, D_G_z2)
+                    log_message = ('Epoch [{}/{}], step [{}/{}], d_loss: {:.4f}, g_loss: {:.4f}, D(x): {:.2f}, Discriminator - D(G(x)): {:.2f}, Generator - D(G(x)): {:.2f}'.format(epoch, args.num_epochs, 
+                                                            itr, num_batches, lossD.item(), lossG.item(), D_x, D_G_z1, D_G_z2)
                     )
                     logger.info(log_message)
+                    if args.hybrid:
+                        log_message = ('Bit/dim {:.4f}({:.4f}) | Grad Norm {:.4f}({:.4f})'.format(loss_meter.val, loss_meter.avg,grad_meter.val, grad_meter.avg))
+                    logger.info(log_message)
+                    train_hist_df = train_hist_df.append({'Epoch':epoch,'Step':itr,'D_loss':lossD.item(), 'G_loss':lossG.item(), 'D(x)':D_x, 'D(G(x1))':D_G_z1, 'D(G(x2))':D_G_z2, 'll_loss':loss_meter.val, 'll_loss_av':loss_meter.avg,'grad_norm':grad_meter.val, 'grad_norm_av':grad_meter.avg},ignore_index=True)
+                    utils.makedirs(args.save)
+                    train_hist_df.to_csv(os.path.join(args.save, f'{unique_file_code}train_hist.csv'))
+
                 else:
                     log_message = (
                         "Iter {:04d} | Time {:.4f}({:.4f}) | Bit/dim {:.4f}({:.4f}) | "
@@ -423,6 +461,7 @@ if __name__ == "__main__":
                         #Real Training
                         output = netD(x)
                         lossD_real = criterion(output,label)
+                        D_x = output.mean().item()
 
                         #Fake Training
                         noise = cvt(torch.randn(200, *data_shape))
@@ -430,6 +469,7 @@ if __name__ == "__main__":
                         label.fill_(fake_label)
                         output = netD(fake_images.detach())
                         lossD_fake = criterion(output,label)
+                        D_G_z1 = output.mean().item()
 
                         lossD = lossD_real + lossD_fake ## For printing purposes ??
 
@@ -438,6 +478,7 @@ if __name__ == "__main__":
                         label.fill_(real_label)
                         output = netD(fake_images)
                         lossG = criterion(output,label)
+                        D_G_z2 = output.mean().item()
                         d_losses.append(lossD)
                         g_losses.append(lossG)
 
@@ -446,6 +487,10 @@ if __name__ == "__main__":
                     d_loss = np.mean(d_losses)
                     g_loss = np.mean(g_losses)
                     logger.info("Epoch {:04d} | Time {:.4f}, Log-Likelihood Bit/dim {:.4f}, Discriminator Loss {:.4f}, Generator Loss {:.4f}".format(epoch, time.time() - start, ll_loss,d_loss,g_loss))
+
+                    test_hist_df = test_hist_df.append({'Epoch':epoch,'D_loss':d_loss, 'G_loss':g_loss, 'D(x)':D_x, 'D(G(x1))':D_G_z1, 'D(G(x2))':D_G_z2, 'll_loss':ll_loss},ignore_index=True)
+                    utils.makedirs(args.save)
+                    test_hist_df.to_csv(os.path.join(args.save, f'{unique_file_code}test_hist.csv'))
                     if ll_loss < best_loss:
                         best_loss = ll_loss
                         utils.makedirs(args.save)
@@ -453,7 +498,7 @@ if __name__ == "__main__":
                             "args": args,
                             "state_dict": model.module.state_dict() if torch.cuda.is_available() else model.state_dict(),
                             "optim_state_dict": optimizer.state_dict(),
-                        }, os.path.join(args.save, "checkpt.pth"))
+                        }, os.path.join(args.save, f"{unique_file_code}checkpt.pth"))
         else:
             model.eval()
             if epoch % args.val_freq == 0:
@@ -477,11 +522,14 @@ if __name__ == "__main__":
                             "args": args,
                             "state_dict": model.module.state_dict() if torch.cuda.is_available() else model.state_dict(),
                             "optim_state_dict": optimizer.state_dict(),
-                        }, os.path.join(args.save, "checkpt.pth"))
+                        }, os.path.join(args.save, f'checkpt.pth'))
 
+        ## Save loss and Accuracy
+
+        
         # visualize samples and density
         with torch.no_grad():
-            fig_filename = os.path.join(args.save, "figs", "{:04d}.jpg".format(epoch))
+            fig_filename = os.path.join(args.save, f"{unique_file_code}figs", "{:04d}.jpg".format(epoch))
             utils.makedirs(os.path.dirname(fig_filename))
             generated_samples = model(fixed_z, reverse=True).view(-1, *data_shape)
             save_image(generated_samples, fig_filename, nrow=10)
