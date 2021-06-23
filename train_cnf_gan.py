@@ -36,16 +36,16 @@ torch.backends.cudnn.benchmark = True
 SOLVERS = ["dopri5", "bdf", "rk4", "midpoint", 'adams', 'explicit_adams']
 parser = argparse.ArgumentParser("Continuous Normalizing Flow")
 parser.add_argument("--ganify",type=eval, default=True,choices=[True,False])
-parser.add_argument("--hybrid",type=eval, default=True,choices=[True,False])
+parser.add_argument("--learning_objective",choices=['adversarial','hybrid','max_likelihood'],type=str,default='adversarial')
 parser.add_argument("--colab_mode",type=eval, default=False,choices=[True,False])
 parser.add_argument("--data", choices=["mnist", "svhn", "cifar10", 'lsun_church'], type=str, default="mnist")
-parser.add_argument("--dims", type=str, default="8,32,32,8")
-parser.add_argument("--strides", type=str, default="2,2,1,-2,-2")
-parser.add_argument("--num_blocks", type=int, default=1, help='Number of stacked CNFs.')
+parser.add_argument("--dims", type=str, default="64,64,64")
+parser.add_argument("--strides", type=str, default="1,1,1,1")
+parser.add_argument("--num_blocks", type=int, default=2, help='Number of stacked CNFs.')
 
 parser.add_argument("--conv", type=eval, default=True, choices=[True, False])
 parser.add_argument(
-    "--layer_type", type=str, default="ignore",
+    "--layer_type", type=str, default="concat",
     choices=["ignore", "concat", "concat_v2", "squash", "concatsquash", "concatcoord", "hyper", "blend"]
 )
 parser.add_argument("--divergence_fn", type=str, default="approximate", choices=["brute_force", "approximate"])
@@ -83,7 +83,7 @@ parser.add_argument('--residual', type=eval, default=False, choices=[True, False
 parser.add_argument('--autoencode', type=eval, default=False, choices=[True, False])
 parser.add_argument('--rademacher', type=eval, default=True, choices=[True, False])
 parser.add_argument('--spectral_norm', type=eval, default=False, choices=[True, False])
-parser.add_argument('--multiscale', type=eval, default=False, choices=[True, False])
+parser.add_argument('--multiscale', type=eval, default=True, choices=[True, False])
 parser.add_argument('--parallel', type=eval, default=False, choices=[True, False])
 
 # Regularizations
@@ -316,10 +316,11 @@ if __name__ == "__main__":
         train_loader = get_train_loader(train_set, epoch)
 
         if epoch == args.begin_epoch:num_batches = len(train_loader)
-
+        
         for _, (x, y) in enumerate(train_loader): ## is x,y a single image? or a batch?
             # cast data and move to device
             x = cvt(x)
+            
 
             #######- Adversarial Training-#########
 
@@ -437,9 +438,19 @@ if __name__ == "__main__":
                         log_message = append_regularization_to_log(log_message, regularization_fns, reg_states)
                     logger.info(log_message)
 
+            if itr%50==0:
+                with torch.no_grad():
+                    fig_filename = os.path.join(args.save, f"{unique_file_code}_iter_figs", "epoch{:04d}_iter{:04d}.jpg".format(epoch,itr))
+                    utils.makedirs(os.path.dirname(fig_filename))
+                    generated_samples = model(fixed_z, reverse=True).view(-1, *data_shape)
+                    save_image(generated_samples, fig_filename, nrow=10)
+
+
+
             itr += 1
 
         # compute test loss
+        itr=0
         if args.ganify:
             model.eval()
             netD.eval()
@@ -453,7 +464,7 @@ if __name__ == "__main__":
                     for (x, y) in test_loader:
                         x = cvt(x)
                         ll_loss = compute_bits_per_dim(x, model)
-                        ll_losses.append(ll_loss)
+                        ll_losses.append(ll_loss.item())
                         
                         bs = x.shape[0]
                         label = torch.full((bs,),real_label,device=device,dtype=torch.float32)
@@ -479,8 +490,8 @@ if __name__ == "__main__":
                         output = netD(fake_images)
                         lossG = criterion(output,label)
                         D_G_z2 = output.mean().item()
-                        d_losses.append(lossD)
-                        g_losses.append(lossG)
+                        d_losses.append(lossD.item())
+                        g_losses.append(lossG.item())
 
 
                     ll_loss = np.mean(ll_losses)
