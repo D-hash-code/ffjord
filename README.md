@@ -36,6 +36,12 @@ python train_vae_flow.py --dataset mnist --flow cnf_rank --rank 64 --dims 1024-1
 
 Glow / Real NVP experiments are run using `train_discrete_toy.py` and `train_discrete_tabular.py`.
 
+## CNFGAN
+CNF-GAN with adversarial learning (MNIST)
+```
+python train_cnf_gan.py --ganify True --learning_objective adversarial
+```
+
 ## Datasets
 
 ### Tabular (UCI + BSDS300)
