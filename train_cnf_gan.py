@@ -31,6 +31,80 @@ from train_misc import set_cnf_options, count_nfe, count_parameters, count_total
 from train_misc import add_spectral_norm, spectral_norm_power_iteration
 from train_misc import create_regularization_fns, get_regularization, append_regularization_to_log
 
+
+'''
+python train_cnf_gan.py
+--ganify True
+--learning_objective hybrid
+--colab_mode True
+
+
+> Arguments to configure
+--dims 
+--strides
+--num_blocks
+--conv 
+--layer_type
+--divergence_fn
+--nonlinearity
+--solver
+--atol
+--rtol
+--step_size
+--test_solver
+--test_atol
+--test_rtol
+--image_size
+--alpha
+--time_length
+--train_T
+--num_epochs
+--batch_size
+--batch_size_schedule
+--test_batch_size
+--lr
+--warmup_iters
+--weight_decay
+--spectral_norm_niter
+--add_noise
+--batch_norm
+--residual
+--autoencode
+--rademacher
+--spectral_norm
+--multiscale
+--parralel
+--l1int
+--l2int
+--dl2int
+--JFrobint
+--JdiagFrobint
+--JoffdiagFrobint
+--time_penalty
+--max_grad_norm
+--begin_epoch
+--resume
+--save
+--val_freq
+--log_freq
+
+
+>Arguments to Add
+- n_critics - number of discriminator iterations
+- f-divergence
+- prior for generator
+- alpha value for applying logits
+- learning rate decay rate
+- minimum learning rate allowed on decay
+- regularisation parameter for adversarial training
+- (real_nvp or nice)
+- number of layers: number of units between input and output in the m function for coupling layer
+- hidden layers: size of hidden layers (only applicable for nice)
+- like-reg: regulizing factor for likelihood vs adversarial losses for hybrid
+- df_dim: dimension depth for discriminator
+
+
+'''
 # go fast boi!!
 torch.backends.cudnn.benchmark = True
 SOLVERS = ["dopri5", "bdf", "rk4", "midpoint", 'adams', 'explicit_adams']
