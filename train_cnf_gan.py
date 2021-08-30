@@ -191,7 +191,7 @@ if True:
     unique_file_code = np.random.choice(100000)
     # logger
     if args.colab_mode:
-        args.save = '/content/drive/MyDrive/Thesis_Colab_Files/results'
+        args.save = '/content/drive/MyDrive/Thesis_Colab_Files/results/final_week_exp'
     utils.makedirs(args.save)
     logger = utils.get_logger(logpath=os.path.join(args.save, f'{unique_file_code}logs'), filepath=os.path.abspath(__file__))
 
