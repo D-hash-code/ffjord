@@ -50,11 +50,11 @@ class ODENVP(nn.Module):
             transforms.append(
                 StackedCNFLayers(
                     initial_size=(c, h, w),
-                    idims=self.intermediate_dims,
+                    idims=self.intermediate_dims, ## (64,64,64) <- tuple
                     squeeze=(i < self.n_scale - 1),  # don't squeeze last layer
                     init_layer=(layers.LogitTransform(self.alpha) if self.alpha > 0 else layers.ZeroMeanTransform())
                     if self.squash_input and i == 0 else None,
-                    n_blocks=self.n_blocks,
+                    n_blocks=self.n_blocks, ## 2 blocks
                     cnf_kwargs=self.cnf_kwargs,
                     nonlinearity=self.nonlinearity,
                 )
@@ -75,6 +75,10 @@ class ODENVP(nn.Module):
         return sum(state * coeff for state, coeff in zip(acc_reg_states, self.regularization_coeffs))
 
     def _calc_n_scale(self, input_size):
+        '''
+        Number of times you have to half the input size
+        to get to <4 by <4 (hxw) images
+        '''
         _, _, h, w = input_size
         n_scale = 0
         while h >= 4 and w >= 4:

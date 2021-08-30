@@ -107,92 +107,99 @@ python train_cnf_gan.py
 '''
 # go fast boi!!
 torch.backends.cudnn.benchmark = True
-SOLVERS = ["dopri5", "bdf", "rk4", "midpoint", 'adams', 'explicit_adams']
-parser = argparse.ArgumentParser("Continuous Normalizing Flow")
-parser.add_argument("--ganify",type=eval, default=True,choices=[True,False])
-parser.add_argument("--learning_objective",choices=['adversarial','hybrid','max_likelihood'],type=str,default='adversarial')
-parser.add_argument("--colab_mode",type=eval, default=False,choices=[True,False])
-parser.add_argument("--data", choices=["mnist", "svhn", "cifar10", 'lsun_church'], type=str, default="mnist")
-parser.add_argument("--dims", type=str, default="64,64,64")
-parser.add_argument("--strides", type=str, default="1,1,1,1")
-parser.add_argument("--num_blocks", type=int, default=2, help='Number of stacked CNFs.')
 
-parser.add_argument("--conv", type=eval, default=True, choices=[True, False])
-parser.add_argument(
-    "--layer_type", type=str, default="concat",
-    choices=["ignore", "concat", "concat_v2", "squash", "concatsquash", "concatcoord", "hyper", "blend"]
-)
-parser.add_argument("--divergence_fn", type=str, default="approximate", choices=["brute_force", "approximate"])
-parser.add_argument(
-    "--nonlinearity", type=str, default="softplus", choices=["tanh", "relu", "softplus", "elu", "swish"]
-)
-parser.add_argument('--solver', type=str, default='dopri5', choices=SOLVERS)
-parser.add_argument('--atol', type=float, default=1e-5)
-parser.add_argument('--rtol', type=float, default=1e-5)
-parser.add_argument("--step_size", type=float, default=None, help="Optional fixed step size.")
+## Args Parser
+if True:
+    SOLVERS = ["dopri5", "bdf", "rk4", "midpoint", 'adams', 'explicit_adams']
+    parser = argparse.ArgumentParser("Continuous Normalizing Flow")
+    parser.add_argument("--ganify",type=eval, default=True,choices=[True,False])
+    parser.add_argument("--learning_objective",choices=['adversarial','hybrid','max_likelihood'],type=str,default='adversarial')
+    parser.add_argument("--colab_mode",type=eval, default=False,choices=[True,False])
+    parser.add_argument("--data", choices=["mnist", "svhn", "cifar10", 'lsun_church'], type=str, default="mnist")
+    parser.add_argument("--dims", type=str, default="64,64,64")
+    parser.add_argument("--strides", type=str, default="1,1,1,1")
+    parser.add_argument("--num_blocks", type=int, default=2, help='Number of stacked CNFs.')
 
-parser.add_argument('--test_solver', type=str, default=None, choices=SOLVERS + [None])
-parser.add_argument('--test_atol', type=float, default=None)
-parser.add_argument('--test_rtol', type=float, default=None)
+    parser.add_argument("--conv", type=eval, default=True, choices=[True, False])
+    parser.add_argument(
+        "--layer_type", type=str, default="concat",
+        choices=["ignore", "concat", "concat_v2", "squash", "concatsquash", "concatcoord", "hyper", "blend"]
+    )
+    parser.add_argument("--divergence_fn", type=str, default="approximate", choices=["brute_force", "approximate"])
+    parser.add_argument(
+        "--nonlinearity", type=str, default="softplus", choices=["tanh", "relu", "softplus", "elu", "swish"]
+    )
+    parser.add_argument('--solver', type=str, default='dopri5', choices=SOLVERS)
+    parser.add_argument('--atol', type=float, default=1e-5)
+    parser.add_argument('--rtol', type=float, default=1e-5)
+    parser.add_argument("--step_size", type=float, default=None, help="Optional fixed step size.")
 
-parser.add_argument("--imagesize", type=int, default=None)
-parser.add_argument("--alpha", type=float, default=1e-6)
-parser.add_argument('--time_length', type=float, default=1.0)
-parser.add_argument('--train_T', type=eval, default=True)
+    parser.add_argument('--test_solver', type=str, default=None, choices=SOLVERS + [None])
+    parser.add_argument('--test_atol', type=float, default=None)
+    parser.add_argument('--test_rtol', type=float, default=None)
 
-parser.add_argument("--num_epochs", type=int, default=1000)
-parser.add_argument("--batch_size", type=int, default=200)
-parser.add_argument(
-    "--batch_size_schedule", type=str, default="", help="Increases the batchsize at every given epoch, dash separated."
-)
-parser.add_argument("--test_batch_size", type=int, default=200)
-parser.add_argument("--lr", type=float, default=1e-3)
-parser.add_argument("--warmup_iters", type=float, default=1000)
-parser.add_argument("--weight_decay", type=float, default=0.0)
-parser.add_argument("--spectral_norm_niter", type=int, default=10)
+    parser.add_argument("--imagesize", type=int, default=None)
+    parser.add_argument("--alpha", type=float, default=1e-6)
+    parser.add_argument('--time_length', type=float, default=1.0)
+    parser.add_argument('--train_T', type=eval, default=True)
 
-parser.add_argument("--add_noise", type=eval, default=True, choices=[True, False])
-parser.add_argument("--batch_norm", type=eval, default=False, choices=[True, False])
-parser.add_argument('--residual', type=eval, default=False, choices=[True, False])
-parser.add_argument('--autoencode', type=eval, default=False, choices=[True, False])
-parser.add_argument('--rademacher', type=eval, default=True, choices=[True, False])
-parser.add_argument('--spectral_norm', type=eval, default=False, choices=[True, False])
-parser.add_argument('--multiscale', type=eval, default=True, choices=[True, False])
-parser.add_argument('--parallel', type=eval, default=False, choices=[True, False])
+    parser.add_argument("--num_epochs", type=int, default=1000)
+    parser.add_argument("--batch_size", type=int, default=200)
+    parser.add_argument(
+        "--batch_size_schedule", type=str, default="", help="Increases the batchsize at every given epoch, dash separated."
+    )
+    parser.add_argument("--test_batch_size", type=int, default=200)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--warmup_iters", type=float, default=1000)
+    parser.add_argument("--weight_decay", type=float, default=0.0)
+    parser.add_argument("--spectral_norm_niter", type=int, default=10)
 
-# Regularizations
-parser.add_argument('--l1int', type=float, default=None, help="int_t ||f||_1")
-parser.add_argument('--l2int', type=float, default=None, help="int_t ||f||_2")
-parser.add_argument('--dl2int', type=float, default=None, help="int_t ||f^T df/dt||_2")
-parser.add_argument('--JFrobint', type=float, default=None, help="int_t ||df/dx||_F")
-parser.add_argument('--JdiagFrobint', type=float, default=None, help="int_t ||df_i/dx_i||_F")
-parser.add_argument('--JoffdiagFrobint', type=float, default=None, help="int_t ||df/dx - df_i/dx_i||_F")
+    parser.add_argument("--add_noise", type=eval, default=True, choices=[True, False])
+    parser.add_argument("--batch_norm", type=eval, default=False, choices=[True, False])
+    parser.add_argument('--residual', type=eval, default=False, choices=[True, False])
+    parser.add_argument('--autoencode', type=eval, default=False, choices=[True, False])
+    parser.add_argument('--rademacher', type=eval, default=True, choices=[True, False])
+    parser.add_argument('--spectral_norm', type=eval, default=False, choices=[True, False])
+    parser.add_argument('--multiscale', type=eval, default=True, choices=[True, False])
+    parser.add_argument('--parallel', type=eval, default=False, choices=[True, False])
 
-parser.add_argument("--time_penalty", type=float, default=0, help="Regularization on the end_time.")
-parser.add_argument(
-    "--max_grad_norm", type=float, default=1e10,
-    help="Max norm of graidents (default is just stupidly high to avoid any clipping)"
-)
+    # Regularizations
+    parser.add_argument('--l1int', type=float, default=None, help="int_t ||f||_1")
+    parser.add_argument('--l2int', type=float, default=None, help="int_t ||f||_2")
+    parser.add_argument('--dl2int', type=float, default=None, help="int_t ||f^T df/dt||_2")
+    parser.add_argument('--JFrobint', type=float, default=None, help="int_t ||df/dx||_F")
+    parser.add_argument('--JdiagFrobint', type=float, default=None, help="int_t ||df_i/dx_i||_F")
+    parser.add_argument('--JoffdiagFrobint', type=float, default=None, help="int_t ||df/dx - df_i/dx_i||_F")
 
-parser.add_argument("--begin_epoch", type=int, default=1)
-parser.add_argument("--resume", type=str, default=None)
-parser.add_argument("--save", type=str, default="experiments/cnf")
-parser.add_argument("--val_freq", type=int, default=1)
-parser.add_argument("--log_freq", type=int, default=10)
+    parser.add_argument("--time_penalty", type=float, default=0, help="Regularization on the end_time.")
+    parser.add_argument(
+        "--max_grad_norm", type=float, default=1e10,
+        help="Max norm of graidents (default is just stupidly high to avoid any clipping)"
+    )
 
-args = parser.parse_args()
-unique_file_code = np.random.choice(100000)
-# logger
-if args.colab_mode:
-    args.save = '/content/drive/MyDrive/Thesis_Colab_Files/results'
-utils.makedirs(args.save)
-logger = utils.get_logger(logpath=os.path.join(args.save, f'{unique_file_code}logs'), filepath=os.path.abspath(__file__))
+    parser.add_argument("--begin_epoch", type=int, default=1)
+    parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--save", type=str, default="experiments/cnf")
+    parser.add_argument("--val_freq", type=int, default=1)
+    parser.add_argument("--log_freq", type=int, default=10)
 
-if args.layer_type == "blend":
-    logger.info("!! Setting time_length from None to 1.0 due to use of Blend layers.")
-    args.time_length = 1.0
+    args = parser.parse_args()
 
-logger.info(args)
+
+## File Logger
+if True:
+    unique_file_code = np.random.choice(100000)
+    # logger
+    if args.colab_mode:
+        args.save = '/content/drive/MyDrive/Thesis_Colab_Files/results'
+    utils.makedirs(args.save)
+    logger = utils.get_logger(logpath=os.path.join(args.save, f'{unique_file_code}logs'), filepath=os.path.abspath(__file__))
+
+    if args.layer_type == "blend":
+        logger.info("!! Setting time_length from None to 1.0 due to use of Blend layers.")
+        args.time_length = 1.0
+
+    logger.info(args)
 
 
 def add_noise(x):
@@ -320,7 +327,7 @@ def create_model(args, data_shape, regularization_fns):
 
 if __name__ == "__main__":
 
-    # get deivce
+    # get device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     cvt = lambda x: x.type(torch.float32).to(device, non_blocking=True)
 
@@ -385,7 +392,7 @@ if __name__ == "__main__":
     test_hist_df = pd.DataFrame(columns=['Epoch','D_loss','G_loss','D(x)','D(G(x1))','D(G(x2))','ll_loss'])
     itr = 0
     for epoch in range(args.begin_epoch, args.num_epochs + 1):
-        model.train() ## Set model to train mode
+        model.train() ## Set model to train model
         if args.ganify: netD.train()
         train_loader = get_train_loader(train_set, epoch)
 
