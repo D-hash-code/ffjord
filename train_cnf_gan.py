@@ -113,6 +113,7 @@ if True:
     SOLVERS = ["dopri5", "bdf", "rk4", "midpoint", 'adams', 'explicit_adams']
     parser = argparse.ArgumentParser("Continuous Normalizing Flow")
     parser.add_argument("--ganify",type=eval, default=True,choices=[True,False])
+    parser.add_argument("--hybrid",type=eval, default=True,choices=[True,False])
     parser.add_argument("--learning_objective",choices=['adversarial','hybrid','max_likelihood'],type=str,default='adversarial')
     parser.add_argument("--colab_mode",type=eval, default=False,choices=[True,False])
     parser.add_argument("--data", choices=["mnist", "svhn", "cifar10", 'lsun_church'], type=str, default="mnist")
